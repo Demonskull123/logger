@@ -473,8 +473,8 @@ local function buildVisualizer()
 
 	local cam = Instance.new("Camera")
 	local CAM_DIST = 22
-	local CAM_HEIGHT = 3.0
-	local CAM_TARGET = Vector3.new(0, 3.0, 0)
+	local CAM_HEIGHT = 3.2
+	local CAM_TARGET = Vector3.new(0, 2.4, 0)
 	cam.CFrame = CFrame.lookAt(
 		Vector3.new(0, CAM_HEIGHT, -CAM_DIST),
 		CAM_TARGET
@@ -488,12 +488,15 @@ local function buildVisualizer()
 
 	local plate = Instance.new("Part")
 	plate.Name = "PreviewFloor"
-	plate.Size = Vector3.new(30, 0.2, 30)
+	plate.Size = Vector3.new(14, 0.2, 14)
 	plate.Position = Vector3.new(0, -0.1, 0)
 	plate.Anchored = true
 	plate.CanCollide = false
+	plate.CanQuery = false
+	plate.CanTouch = false
 	plate.Color = Color3.fromRGB(60, 60, 60)
 	plate.Material = Enum.Material.SmoothPlastic
+	plate.Transparency = 0.35
 	plate.Parent = world
 
 	local idBar = Instance.new("TextLabel")
@@ -676,7 +679,8 @@ local function buildVisualizer()
 
 		local hrp = model:FindFirstChild("HumanoidRootPart")
 		if hrp then
-			model:PivotTo(CFrame.new(0, 3.0, 0))
+			-- R15: HRP sits ~2.5 studs above the feet. Place feet on plate top (Y=0).
+			model:PivotTo(CFrame.new(0, 2.5, 0))
 			hrp.Anchored = true
 		end
 
@@ -791,7 +795,8 @@ local function buildVisualizer()
 	btnStop.MouseButton1Click:Connect(stop)
 
 	local SPEEDS = { 0.1, 0.25, 0.5, 1, 1.5, 2 }
-	local si = 4	btnSpeed.MouseButton1Click:Connect(function()
+	local si = 4
+	btnSpeed.MouseButton1Click:Connect(function()
 		si = si % #SPEEDS + 1
 		Visualizer.speed = SPEEDS[si]
 		btnSpeed.Text = "Speed " .. tostring(Visualizer.speed) .. "x"
