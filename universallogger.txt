@@ -38,6 +38,20 @@ local function toRbxAsset(id)
 	return id
 end
 
+local function toNum(id)
+	if type(id) ~= "string" then return id end
+	return id:match("id=(%d+)") or id:match("rbxassetid://(%d+)") or id:match("^(%d+)$") or id
+end
+
+local function copyId(id)
+	local n = toNum(id)
+	if setclipboard then
+		pcall(setclipboard, tostring(n))
+	elseif setrbxclipboard then
+		pcall(setrbxclipboard, tostring(n))
+	end
+end
+
 local timings = {}
 local dots = {}
 
@@ -92,6 +106,82 @@ local function stroke(p, col)
 	s.Parent = p
 end
 
+-- ===== Movement lock =====
+local MoveLock = {
+	enabled = false,
+	saved = nil,
+}
+
+local function applyMoveLock()
+	local char = LP.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	if not MoveLock.saved then
+		MoveLock.saved = {
+			WalkSpeed    = hum.WalkSpeed,
+			JumpPower    = hum.JumpPower,
+			JumpHeight   = hum.JumpHeight,
+			UseJumpPower = hum.UseJumpPower,
+		}
+	end
+	hum.WalkSpeed = 0
+	if hum.UseJumpPower then
+		hum.JumpPower = 0
+	else
+		hum.JumpHeight = 0
+	end
+	hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false)
+	hum:ChangeState(Enum.HumanoidStateType.Seated)
+	local jumpCtrl = hum:FindFirstChild("JumpControl") or hum:FindFirstChild("Controller")
+	if jumpCtrl then pcall(function() jumpCtrl:Destroy() end) end
+end
+
+local function restoreMoveLock()
+	local char = LP.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	if MoveLock.saved then
+		hum.WalkSpeed    = MoveLock.saved.WalkSpeed
+		hum.JumpPower    = MoveLock.saved.JumpPower
+		hum.JumpHeight   = MoveLock.saved.JumpHeight
+		hum.UseJumpPower = MoveLock.saved.UseJumpPower
+	end
+	hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, true)
+end
+
+local function setMoveLock(on)
+	MoveLock.enabled = on
+	if on then
+		applyMoveLock()
+	else
+		restoreMoveLock()
+	end
+end
+
+LP.CharacterAdded:Connect(function(c)
+	local hum = c:WaitForChild("Humanoid", 5)
+	if hum and MoveLock.enabled then
+		task.wait(0.2)
+		MoveLock.saved = nil
+		applyMoveLock()
+	end
+end)
+
+-- ===== Visualizer =====
 local Visualizer = {}
 
 function Visualizer.selectAnim(id)
@@ -264,26 +354,47 @@ local function buildLogger(cfg)
 		Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 		dots[id] = dot
 
-		local function cell(txt, xo, w, col)
-			local l = Instance.new("TextLabel")
+		local function cell(txt, xo, w, col, interactive)
+			local l = Instance.new(interactive and "TextButton" or "TextLabel")
 			l.Size = UDim2.new(0, w, 1, 0)
 			l.Position = UDim2.new(0, xo, 0, 0)
 			l.BackgroundTransparency = 1
 			l.Text = txt
+			if interactive then l.AutoButtonColor = false end
 			l.Font = Enum.Font.Gotham
 			l.TextSize = 10
 			l.TextColor3 = col or Color3.fromRGB(220, 220, 220)
 			l.TextXAlignment = Enum.TextXAlignment.Left
 			l.TextTruncate = Enum.TextTruncate.AtEnd
 			l.Parent = row
+			return l
 		end
 
 		cell(name ~= "" and name or "Anim", 20, 132)
-		cell(toRbxAsset(id), 158, 146, Color3.fromRGB(180, 180, 180))
+		local idBtn = cell(toRbxAsset(id), 158, 146, Color3.fromRGB(180, 180, 180), true)
 		cell(source, 306, 66)
 		cell(tostring(dist or 0), 374, 50)
 
+		local function flashCopied()
+			local original = idBtn.TextColor3
+			idBtn.TextColor3 = Color3.fromRGB(120, 230, 120)
+			task.delay(0.25, function()
+				if idBtn and idBtn.Parent then
+					idBtn.TextColor3 = original
+				end
+			end)
+		end
+
+		idBtn.MouseButton1Click:Connect(function()
+			copyId(id)
+			flashCopied()
+		end)
+
 		row.MouseButton1Click:Connect(function() Visualizer.selectAnim(id) end)
+
+		row.MouseButton2Click:Connect(function()
+			copyId(id)
+		end)
 
 		table.insert(rows, row)
 		title.Text = cfg.title .. "     " .. #rows .. " Entries"
@@ -330,6 +441,24 @@ local function buildVisualizer()
 	closeX.Parent = frame
 	closeX.MouseButton1Click:Connect(function() frame.Visible = false end)
 
+	local restore = Instance.new("TextButton")
+	restore.Size = UDim2.new(0, 24, 0, 22)
+	restore.Position = UDim2.new(0, 12, 0, 446)
+	restore.BackgroundColor3 = Color3.fromRGB(50, 80, 120)
+	restore.Text = "V"
+	restore.Font = Enum.Font.GothamBold
+	restore.TextSize = 12
+	restore.TextColor3 = Color3.new(1, 1, 1)
+	restore.BorderSizePixel = 0
+	restore.Visible = false
+	restore.Parent = gui
+	corner(restore)
+	stroke(restore, Color3.fromRGB(90, 130, 180))
+	restore.MouseButton1Click:Connect(function()
+		frame.Visible = true
+		restore.Visible = false
+	end)
+
 	local vp = Instance.new("ViewportFrame")
 	vp.Size = UDim2.new(0, 600, 0, 260)
 	vp.Position = UDim2.new(0, 10, 0, 26)
@@ -343,8 +472,14 @@ local function buildVisualizer()
 	stroke(vp, Color3.fromRGB(80, 80, 80))
 
 	local cam = Instance.new("Camera")
-	cam.CFrame = CFrame.new(Vector3.new(0, 3.5, -12), Vector3.new(0, 3, 0))
-	cam.FieldOfView = 60
+	local CAM_DIST = 22
+	local CAM_HEIGHT = 3.0
+	local CAM_TARGET = Vector3.new(0, 3.0, 0)
+	cam.CFrame = CFrame.lookAt(
+		Vector3.new(0, CAM_HEIGHT, -CAM_DIST),
+		CAM_TARGET
+	)
+	cam.FieldOfView = 45
 	cam.Parent = vp
 	vp.CurrentCamera = cam
 
@@ -377,9 +512,21 @@ local function buildVisualizer()
 	idPad.PaddingLeft = UDim.new(0, 6)
 	idPad.Parent = idBar
 
+	local copyBtn = Instance.new("TextButton")
+	copyBtn.Size = UDim2.new(0, 22, 0, 18)
+	copyBtn.Position = UDim2.new(0, 484, 0, 292)
+	copyBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+	copyBtn.Text = "C"
+	copyBtn.Font = Enum.Font.GothamBold
+	copyBtn.TextSize = 11
+	copyBtn.TextColor3 = Color3.new(1, 1, 1)
+	copyBtn.BorderSizePixel = 0
+	copyBtn.Parent = frame
+	corner(copyBtn, 2)
+
 	local badge = Instance.new("TextLabel")
-	badge.Size = UDim2.new(0, 120, 0, 18)
-	badge.Position = UDim2.new(0, 490, 0, 292)
+	badge.Size = UDim2.new(0, 104, 0, 18)
+	badge.Position = UDim2.new(0, 506, 0, 292)
 	badge.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 	badge.BorderSizePixel = 0
 	badge.Text = "NONE"
@@ -388,6 +535,17 @@ local function buildVisualizer()
 	badge.TextColor3 = Color3.new(1, 1, 1)
 	badge.Parent = frame
 	corner(badge, 2)
+
+	copyBtn.MouseButton1Click:Connect(function()
+		if Visualizer.currentId then
+			copyId(Visualizer.currentId)
+			local o = copyBtn.TextColor3
+			copyBtn.TextColor3 = Color3.fromRGB(120, 230, 120)
+			task.delay(0.25, function()
+				if copyBtn and copyBtn.Parent then copyBtn.TextColor3 = o end
+			end)
+		end
+	end)
 
 	local scrubBg = Instance.new("Frame")
 	scrubBg.Size = UDim2.new(0, 600, 0, 14)
@@ -436,12 +594,13 @@ local function buildVisualizer()
 		return b
 	end
 
-	local btnPlay  = mkBtn("Play",          0,   70, 24, Color3.fromRGB(50, 130, 50), ctrl)
-	local btnPause = mkBtn("Pause",         76,  70, 24, Color3.fromRGB(130, 100, 40), ctrl)
-	local btnStop  = mkBtn("Stop",          152, 70, 24, Color3.fromRGB(140, 50, 50), ctrl)
-	local btnSpeed = mkBtn("Speed 1x",      228, 90, 24, Color3.fromRGB(60, 60, 90), ctrl)
-	local btnLoop  = mkBtn("Loop ON",       324, 90, 24, Color3.fromRGB(70, 70, 100), ctrl)
-	local btnClear = mkBtn("Clear Timings", 420, 180, 24, Color3.fromRGB(120, 30, 30), ctrl)
+	local btnPlay   = mkBtn("Play",          0,   60, 24, Color3.fromRGB(50, 130, 50), ctrl)
+	local btnPause  = mkBtn("Pause",         64,  60, 24, Color3.fromRGB(130, 100, 40), ctrl)
+	local btnStop   = mkBtn("Stop",          128, 60, 24, Color3.fromRGB(140, 50, 50), ctrl)
+	local btnSpeed  = mkBtn("Speed 1x",      192, 76, 24, Color3.fromRGB(60, 60, 90), ctrl)
+	local btnLoop   = mkBtn("Loop ON",       272, 76, 24, Color3.fromRGB(70, 70, 100), ctrl)
+	local btnMove   = mkBtn("Move OFF",      352, 90, 24, Color3.fromRGB(90, 60, 60), ctrl)
+	local btnClear  = mkBtn("Clear Timings", 446, 154, 24, Color3.fromRGB(120, 30, 30), ctrl)
 
 	local function refreshBadge()
 		if not Visualizer.currentId then
@@ -517,7 +676,7 @@ local function buildVisualizer()
 
 		local hrp = model:FindFirstChild("HumanoidRootPart")
 		if hrp then
-			model:PivotTo(CFrame.new(0, 3, 0))
+			model:PivotTo(CFrame.new(0, 3.0, 0))
 			hrp.Anchored = true
 		end
 
@@ -632,8 +791,7 @@ local function buildVisualizer()
 	btnStop.MouseButton1Click:Connect(stop)
 
 	local SPEEDS = { 0.1, 0.25, 0.5, 1, 1.5, 2 }
-	local si = 4
-	btnSpeed.MouseButton1Click:Connect(function()
+	local si = 4	btnSpeed.MouseButton1Click:Connect(function()
 		si = si % #SPEEDS + 1
 		Visualizer.speed = SPEEDS[si]
 		btnSpeed.Text = "Speed " .. tostring(Visualizer.speed) .. "x"
@@ -648,6 +806,13 @@ local function buildVisualizer()
 		if Visualizer.track then
 			pcall(function() Visualizer.track.Looped = Visualizer.looping end)
 		end
+	end)
+
+	btnMove.MouseButton1Click:Connect(function()
+		local next = not MoveLock.enabled
+		setMoveLock(next)
+		btnMove.Text = next and "Move ON" or "Move OFF"
+		btnMove.BackgroundColor3 = next and Color3.fromRGB(60, 130, 60) or Color3.fromRGB(90, 60, 60)
 	end)
 
 	btnClear.MouseButton1Click:Connect(function()
@@ -672,9 +837,14 @@ local function buildVisualizer()
 		end
 	end)
 
+	frame:GetPropertyChangedSignal("Visible"):Connect(function()
+		restore.Visible = not frame.Visible
+	end)
+
 	Visualizer.frame = frame
 	Visualizer.idBar = idBar
 	Visualizer.playFn = play
+	Visualizer.btnMove = btnMove
 end
 
 loadTimings()
