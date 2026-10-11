@@ -1,0 +1,853 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local LP = Players.LocalPlayer
+
+local FILE = "universal_anim_timings.json"
+
+local LOCO = {
+	WalkAnim=true,JumpAnim=true,RunAnim=true,SwimAnim=true,IdleAnim=true,
+	FallAnim=true,SwimIdleAnim=true,ClimbAnim=true,
+	Walk=true,Jump=true,Run=true,Swim=true,Idle=true,Fall=true,
+	SwimIdle=true,Climb=true,
+	Walking=true,Jumping=true,Running=true,Swimming=true,
+	Idling=true,Falling=true,SwimIdling=true,Climbing=true,
+}
+
+local LOCO_FRAG = {
+	"507766","507777","507797","180435571","180435792",
+	"125750702","125749238","180436148","180436334",
+	"125751086","125750609","180436552","180436678",
+	"507771019","507770818","507767714","507768375",
+	"507770239","507770453",
+}
+
+local function isLoco(id, name)
+	if LOCO[name] then return true end
+	for _, f in ipairs(LOCO_FRAG) do
+		if id:find(f) then return true end
+	end
+	return false
+end
+
+local function toRbxAsset(id)
+	if type(id) ~= "string" then return id end
+	local num = id:match("id=(%d+)") or id:match("rbxassetid://(%d+)") or id:match("^(%d+)$")
+	if num then return "rbxassetid://" .. num end
+	return id
+end
+
+local timings = {}
+local dots = {}
+
+local function loadTimings()
+	local ok, raw = pcall(readfile, FILE)
+	if not ok or not raw or raw == "" then return end
+	local ok2, tbl = pcall(function() return HttpService:JSONDecode(raw) end)
+	if ok2 and type(tbl) == "table" then timings = tbl end
+end
+
+local function saveTimings()
+	pcall(function() writefile(FILE, HttpService:JSONEncode(timings)) end)
+end
+
+local function refreshDots()
+	for id, d in pairs(dots) do
+		if d and d.Parent then
+			d.BackgroundColor3 = timings[id]
+				and Color3.fromRGB(80, 220, 120)
+				or Color3.fromRGB(70, 70, 70)
+		end
+	end
+end
+
+local function mkGui(name)
+	for _, r in ipairs({ gethui and gethui() or nil, game:GetService("CoreGui"), LP:FindFirstChild("PlayerGui") }) do
+		if r then
+			local old = r:FindFirstChild(name)
+			if old then pcall(function() old:Destroy() end) end
+		end
+	end
+	local g = Instance.new("ScreenGui")
+	g.Name = name
+	g.ResetOnSpawn = false
+	g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function() g.Parent = gethui() end)
+	if not g.Parent then pcall(function() g.Parent = game:GetService("CoreGui") end) end
+	if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
+	return g
+end
+
+local function corner(p, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 3)
+	c.Parent = p
+end
+
+local function stroke(p, col)
+	local s = Instance.new("UIStroke")
+	s.Color = col
+	s.Thickness = 1
+	s.Parent = p
+end
+
+local Visualizer = {}
+
+function Visualizer.selectAnim(id)
+	if type(id) ~= "string" or id == "" then return end
+	if Visualizer.frame then
+		Visualizer.currentId = id
+		if Visualizer.idBar then Visualizer.idBar.Text = toRbxAsset(id) end
+		Visualizer.frame.Visible = true
+		if Visualizer.playFn then Visualizer.playFn(id) end
+	else
+		Visualizer.pending = id
+	end
+end
+
+local function buildLogger(cfg)
+	local gui = mkGui(cfg.guiName)
+
+	local win = Instance.new("Frame")
+	win.Name = cfg.winName
+	win.Size = UDim2.new(0, cfg.w, 0, cfg.h)
+	win.Position = UDim2.new(0, cfg.x, 0, cfg.y)
+	win.BackgroundColor3 = cfg.bg
+	win.BorderSizePixel = 0
+	win.Active = true
+	win.Draggable = true
+	win.Parent = gui
+	corner(win, 4)
+	stroke(win, cfg.strokeCol)
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -100, 0, 22)
+	title.Position = UDim2.new(0, 10, 0, 4)
+	title.BackgroundTransparency = 1
+	title.Text = cfg.title .. "     0 Entries"
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 12
+	title.TextColor3 = cfg.titleCol
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = win
+
+	local clear = Instance.new("TextButton")
+	clear.Size = UDim2.new(0, 50, 0, 18)
+	clear.Position = UDim2.new(1, -78, 0, 6)
+	clear.BackgroundColor3 = cfg.btnBg
+	clear.Text = "Clear"
+	clear.Font = Enum.Font.Gotham
+	clear.TextSize = 11
+	clear.TextColor3 = Color3.fromRGB(230, 230, 230)
+	clear.BorderSizePixel = 0
+	clear.Parent = win
+	corner(clear)
+
+	local close = Instance.new("TextButton")
+	close.Size = UDim2.new(0, 18, 0, 18)
+	close.Position = UDim2.new(1, -24, 0, 6)
+	close.BackgroundColor3 = cfg.btnBg
+	close.Text = "X"
+	close.Font = Enum.Font.GothamBold
+	close.TextSize = 11
+	close.TextColor3 = Color3.fromRGB(230, 230, 230)
+	close.BorderSizePixel = 0
+	close.Parent = win
+	corner(close)
+
+	local reopen = Instance.new("TextButton")
+	reopen.Size = UDim2.new(0, 150, 0, 22)
+	reopen.Position = UDim2.new(0, 12, 0, cfg.reopenY)
+	reopen.BackgroundColor3 = cfg.btnBg
+	reopen.Text = cfg.title
+	reopen.Font = Enum.Font.GothamBold
+	reopen.TextSize = 11
+	reopen.TextColor3 = cfg.titleCol
+	reopen.BorderSizePixel = 0
+	reopen.Visible = false
+	reopen.Parent = gui
+	corner(reopen)
+	stroke(reopen, cfg.strokeCol)
+
+	close.MouseButton1Click:Connect(function()
+		win.Visible = false
+		reopen.Visible = true
+	end)
+	reopen.MouseButton1Click:Connect(function()
+		win.Visible = true
+		reopen.Visible = false
+	end)
+
+	local hdr = Instance.new("Frame")
+	hdr.Size = UDim2.new(1, -16, 0, 18)
+	hdr.Position = UDim2.new(0, 8, 0, 28)
+	hdr.BackgroundTransparency = 1
+	hdr.Parent = win
+
+	local function hcell(txt, xo, w)
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(0, w, 1, 0)
+		l.Position = UDim2.new(0, xo, 0, 0)
+		l.BackgroundTransparency = 1
+		l.Text = txt
+		l.Font = Enum.Font.GothamBold
+		l.TextSize = 10
+		l.TextColor3 = cfg.titleCol
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Parent = hdr
+	end
+	hcell("T", 2, 14)
+	hcell("Animation", 20, 132)
+	hcell("ID", 158, 146)
+	hcell("Source", 306, 66)
+	hcell("Dist", 374, 50)
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -16, 1, -54)
+	scroll.Position = UDim2.new(0, 8, 0, 48)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 4
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.Parent = win
+
+	local lay = Instance.new("UIListLayout")
+	lay.Padding = UDim.new(0, 3)
+	lay.Parent = scroll
+	lay:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		scroll.CanvasSize = UDim2.new(0, 0, 0, lay.AbsoluteContentSize.Y + 4)
+	end)
+
+	local rows = {}
+
+	local function clearAll()
+		for _, r in ipairs(rows) do
+			if r and r.Parent then r:Destroy() end
+		end
+		rows = {}
+		title.Text = cfg.title .. "     0 Entries"
+	end
+	clear.MouseButton1Click:Connect(clearAll)
+
+	local api = {
+		win = win,
+		reopen = reopen,
+		scroll = scroll,
+		clear = clearAll,
+		title = title,
+		cfg = cfg,
+	}
+
+	function api.addRow(id, name, source, dist)
+		if not scroll or not scroll.Parent then return end
+		if #rows >= 400 then
+			local old = table.remove(rows, 1)
+			if old then old:Destroy() end
+		end
+
+		local row = Instance.new("TextButton")
+		row.Size = UDim2.new(1, -4, 0, 22)
+		row.BackgroundColor3 = cfg.rowBg
+		row.Text = ""
+		row.AutoButtonColor = false
+		row.BorderSizePixel = 0
+		row.Parent = scroll
+		corner(row)
+
+		local dot = Instance.new("Frame")
+		dot.Size = UDim2.new(0, 8, 0, 8)
+		dot.Position = UDim2.new(0, 4, 0.5, -4)
+		dot.BackgroundColor3 = timings[id] and Color3.fromRGB(80, 220, 120) or Color3.fromRGB(70, 70, 70)
+		dot.BorderSizePixel = 0
+		dot.Parent = row
+		Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+		dots[id] = dot
+
+		local function cell(txt, xo, w, col)
+			local l = Instance.new("TextLabel")
+			l.Size = UDim2.new(0, w, 1, 0)
+			l.Position = UDim2.new(0, xo, 0, 0)
+			l.BackgroundTransparency = 1
+			l.Text = txt
+			l.Font = Enum.Font.Gotham
+			l.TextSize = 10
+			l.TextColor3 = col or Color3.fromRGB(220, 220, 220)
+			l.TextXAlignment = Enum.TextXAlignment.Left
+			l.TextTruncate = Enum.TextTruncate.AtEnd
+			l.Parent = row
+		end
+
+		cell(name ~= "" and name or "Anim", 20, 132)
+		cell(toRbxAsset(id), 158, 146, Color3.fromRGB(180, 180, 180))
+		cell(source, 306, 66)
+		cell(tostring(dist or 0), 374, 50)
+
+		row.MouseButton1Click:Connect(function() Visualizer.selectAnim(id) end)
+
+		table.insert(rows, row)
+		title.Text = cfg.title .. "     " .. #rows .. " Entries"
+	end
+
+	return api
+end
+
+local function buildVisualizer()
+	local gui = mkGui("UniversalAnimVisualizer")
+
+	local frame = Instance.new("Frame")
+	frame.Name = "AnimViz"
+	frame.Size = UDim2.new(0, 620, 0, 400)
+	frame.Position = UDim2.new(0.5, -310, 0.5, -200)
+	frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+	frame.BorderSizePixel = 0
+	frame.Active = true
+	frame.Draggable = true
+	frame.Parent = gui
+	corner(frame, 4)
+	stroke(frame, Color3.fromRGB(60, 60, 60))
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -20, 0, 20)
+	title.Position = UDim2.new(0, 10, 0, 3)
+	title.BackgroundTransparency = 1
+	title.Text = "Universal Anim Visualizer"
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 12
+	title.TextColor3 = Color3.fromRGB(230, 230, 230)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = frame
+
+	local closeX = Instance.new("TextButton")
+	closeX.Size = UDim2.new(0, 20, 0, 18)
+	closeX.Position = UDim2.new(1, -24, 0, 3)
+	closeX.BackgroundTransparency = 1
+	closeX.Text = "X"
+	closeX.Font = Enum.Font.GothamBold
+	closeX.TextSize = 12
+	closeX.TextColor3 = Color3.fromRGB(220, 220, 220)
+	closeX.BorderSizePixel = 0
+	closeX.Parent = frame
+	closeX.MouseButton1Click:Connect(function() frame.Visible = false end)
+
+	local vp = Instance.new("ViewportFrame")
+	vp.Size = UDim2.new(0, 600, 0, 260)
+	vp.Position = UDim2.new(0, 10, 0, 26)
+	vp.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	vp.BorderSizePixel = 0
+	vp.Ambient = Color3.fromRGB(180, 180, 180)
+	vp.LightColor = Color3.fromRGB(255, 255, 255)
+	vp.LightDirection = Vector3.new(-0.5, -1, -0.5)
+	vp.Parent = frame
+	corner(vp, 2)
+	stroke(vp, Color3.fromRGB(80, 80, 80))
+
+	local cam = Instance.new("Camera")
+	cam.CFrame = CFrame.new(Vector3.new(0, 3.5, -12), Vector3.new(0, 3, 0))
+	cam.FieldOfView = 60
+	cam.Parent = vp
+	vp.CurrentCamera = cam
+
+	local world = Instance.new("WorldModel")
+	world.Parent = vp
+
+	local plate = Instance.new("Part")
+	plate.Name = "PreviewFloor"
+	plate.Size = Vector3.new(30, 0.2, 30)
+	plate.Position = Vector3.new(0, -0.1, 0)
+	plate.Anchored = true
+	plate.CanCollide = false
+	plate.Color = Color3.fromRGB(60, 60, 60)
+	plate.Material = Enum.Material.SmoothPlastic
+	plate.Parent = world
+
+	local idBar = Instance.new("TextLabel")
+	idBar.Size = UDim2.new(0, 470, 0, 18)
+	idBar.Position = UDim2.new(0, 10, 0, 292)
+	idBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	idBar.BorderSizePixel = 0
+	idBar.Text = "rbxassetid://0"
+	idBar.Font = Enum.Font.Gotham
+	idBar.TextSize = 11
+	idBar.TextColor3 = Color3.fromRGB(200, 200, 200)
+	idBar.TextXAlignment = Enum.TextXAlignment.Left
+	idBar.Parent = frame
+	corner(idBar, 2)
+	local idPad = Instance.new("UIPadding")
+	idPad.PaddingLeft = UDim.new(0, 6)
+	idPad.Parent = idBar
+
+	local badge = Instance.new("TextLabel")
+	badge.Size = UDim2.new(0, 120, 0, 18)
+	badge.Position = UDim2.new(0, 490, 0, 292)
+	badge.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	badge.BorderSizePixel = 0
+	badge.Text = "NONE"
+	badge.Font = Enum.Font.GothamBold
+	badge.TextSize = 11
+	badge.TextColor3 = Color3.new(1, 1, 1)
+	badge.Parent = frame
+	corner(badge, 2)
+
+	local scrubBg = Instance.new("Frame")
+	scrubBg.Size = UDim2.new(0, 600, 0, 14)
+	scrubBg.Position = UDim2.new(0, 10, 0, 314)
+	scrubBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+	scrubBg.BorderSizePixel = 0
+	scrubBg.Parent = frame
+	corner(scrubBg)
+
+	local scrubFill = Instance.new("Frame")
+	scrubFill.Size = UDim2.new(0, 0, 1, 0)
+	scrubFill.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+	scrubFill.BorderSizePixel = 0
+	scrubFill.Parent = scrubBg
+	corner(scrubFill)
+
+	local timeLbl = Instance.new("TextLabel")
+	timeLbl.Size = UDim2.new(0, 600, 0, 14)
+	timeLbl.Position = UDim2.new(0, 10, 0, 332)
+	timeLbl.BackgroundTransparency = 1
+	timeLbl.Text = "0.000s / 0.000s"
+	timeLbl.Font = Enum.Font.Gotham
+	timeLbl.TextSize = 10
+	timeLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+	timeLbl.TextXAlignment = Enum.TextXAlignment.Left
+	timeLbl.Parent = frame
+
+	local ctrl = Instance.new("Frame")
+	ctrl.Size = UDim2.new(0, 600, 0, 26)
+	ctrl.Position = UDim2.new(0, 10, 0, 350)
+	ctrl.BackgroundTransparency = 1
+	ctrl.Parent = frame
+
+	local function mkBtn(text, xo, w, h, col, parent)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(0, w, 0, h)
+		b.Position = UDim2.new(0, xo, 0, 0)
+		b.BackgroundColor3 = col
+		b.Text = text
+		b.Font = Enum.Font.GothamBold
+		b.TextSize = h >= 24 and 11 or 10
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.BorderSizePixel = 0
+		b.Parent = parent
+		corner(b)
+		return b
+	end
+
+	local btnPlay  = mkBtn("Play",          0,   70, 24, Color3.fromRGB(50, 130, 50), ctrl)
+	local btnPause = mkBtn("Pause",         76,  70, 24, Color3.fromRGB(130, 100, 40), ctrl)
+	local btnStop  = mkBtn("Stop",          152, 70, 24, Color3.fromRGB(140, 50, 50), ctrl)
+	local btnSpeed = mkBtn("Speed 1x",      228, 90, 24, Color3.fromRGB(60, 60, 90), ctrl)
+	local btnLoop  = mkBtn("Loop ON",       324, 90, 24, Color3.fromRGB(70, 70, 100), ctrl)
+	local btnClear = mkBtn("Clear Timings", 420, 180, 24, Color3.fromRGB(120, 30, 30), ctrl)
+
+	local function refreshBadge()
+		if not Visualizer.currentId then
+			badge.Text = "NONE"
+			badge.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+			return
+		end
+		if timings[Visualizer.currentId] then
+			badge.Text = "LOGGED"
+			badge.BackgroundColor3 = Color3.fromRGB(40, 140, 60)
+		else
+			badge.Text = "NEW"
+			badge.BackgroundColor3 = Color3.fromRGB(200, 120, 40)
+		end
+	end
+
+	local function buildRig()
+		for _, c in ipairs(world:GetChildren()) do
+			if c.Name ~= "PreviewFloor" then c:Destroy() end
+		end
+		Visualizer.rig = nil
+		Visualizer.hum = nil
+
+		local char = LP.Character
+		if not char then return end
+		local hum0 = char:FindFirstChildOfClass("Humanoid")
+		if not hum0 then return end
+
+		local desc = hum0:GetAppliedDescription()
+		if not desc then return end
+
+		local ok, model = pcall(function()
+			return Players:CreateHumanoidModelFromDescription(desc, hum0.RigType, Enum.HumanoidRigType.R15)
+		end)
+		if not ok or not model then
+			ok, model = pcall(function()
+				return Players:CreateHumanoidModelFromDescription(desc, hum0.RigType)
+			end)
+		end
+		if not ok or not model then return end
+
+		model.Name = "PreviewRig"
+
+		for _, p in ipairs(model:GetDescendants()) do
+			if p:IsA("BasePart") then
+				p.CanCollide = false
+				p.CanQuery = false
+				p.CanTouch = false
+				p.Massless = true
+			end
+		end
+
+		model.Parent = world
+
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+			hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+			hum.NameDisplayDistance = 0
+			hum.HealthDisplayDistance = 0
+			hum.BreakJointsOnDeath = false
+			hum.RequiresNeck = false
+			hum.PlatformStand = false
+			hum.AutoRotate = false
+			hum.EvaluateStateMachine = false
+			hum.RigType = hum0.RigType
+			local old = hum:FindFirstChildOfClass("Animator")
+			if old then old:Destroy() end
+			local a = Instance.new("Animator")
+			a.Parent = hum
+			Visualizer.hum = hum
+		end
+
+		local hrp = model:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			model:PivotTo(CFrame.new(0, 3, 0))
+			hrp.Anchored = true
+		end
+
+		Visualizer.rig = model
+	end
+
+	buildRig()
+
+	local function stop()
+		if Visualizer.track then
+			pcall(function() Visualizer.track:Stop() end)
+			Visualizer.track = nil
+		end
+		Visualizer.paused = false
+		scrubFill.Size = UDim2.new(0, 0, 1, 0)
+		timeLbl.Text = "0.000s / 0.000s"
+		btnPause.Text = "Pause"
+	end
+
+	local function play(id)
+		if not Visualizer.hum or not Visualizer.hum.Parent then buildRig() end
+		if not Visualizer.hum then return end
+
+		stop()
+
+		local useId = toRbxAsset(id)
+
+		local a = Instance.new("Animation")
+		a.AnimationId = useId
+
+		local okL, track = pcall(function() return Visualizer.hum:LoadAnimation(a) end)
+		if not okL or not track then return end
+
+		track.Looped = Visualizer.looping
+		track:Play()
+		pcall(function() track:AdjustSpeed(Visualizer.speed) end)
+
+		Visualizer.track = track
+		Visualizer.duration = track.Length or 0
+		Visualizer.paused = false
+		btnPause.Text = "Pause"
+		refreshBadge()
+	end
+
+	local function togglePause()
+		if not Visualizer.track then return end
+		Visualizer.paused = not Visualizer.paused
+		if Visualizer.paused then
+			Visualizer.pausedTime = Visualizer.track.TimePosition
+			pcall(function() Visualizer.track:AdjustSpeed(0) end)
+			pcall(function() Visualizer.track:Pause() end)
+			btnPause.Text = "Resume"
+		else
+			pcall(function() Visualizer.track:Play() end)
+			pcall(function() Visualizer.track.TimePosition = Visualizer.pausedTime end)
+			pcall(function() Visualizer.track:AdjustSpeed(Visualizer.speed) end)
+			btnPause.Text = "Pause"
+		end
+	end
+
+	RunService.RenderStepped:Connect(function()
+		if not Visualizer.track then return end
+		if Visualizer.paused then
+			pcall(function() Visualizer.track.TimePosition = Visualizer.pausedTime end)
+		end
+		local t   = Visualizer.track.TimePosition or 0
+		local dur = Visualizer.track.Length or Visualizer.duration or 0
+		Visualizer.duration = dur
+		local frac = dur > 0 and (t / dur) or 0
+		if frac > 1 then frac = 1 end
+		scrubFill.Size = UDim2.new(frac, 0, 1, 0)
+		timeLbl.Text = string.format("%.3fs / %.3fs", t, dur)
+	end)
+
+	local dragging = false
+	scrubBg.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			if Visualizer.track then
+				local width = scrubBg.AbsoluteSize.X
+				if width > 0 then
+					local f = math.clamp((input.Position.X - scrubBg.AbsolutePosition.X) / width, 0, 1)
+					Visualizer.pausedTime = f * (Visualizer.track.Length or 0)
+					pcall(function() Visualizer.track.TimePosition = Visualizer.pausedTime end)
+				end
+			end
+		end
+	end)
+	scrubBg.InputChanged:Connect(function(input)
+		if not dragging or not Visualizer.track then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		local width = scrubBg.AbsoluteSize.X
+		if width > 0 then
+			local f = math.clamp((input.Position.X - scrubBg.AbsolutePosition.X) / width, 0, 1)
+			Visualizer.pausedTime = f * (Visualizer.track.Length or 0)
+			pcall(function() Visualizer.track.TimePosition = Visualizer.pausedTime end)
+		end
+	end)
+	scrubBg.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+
+	btnPlay.MouseButton1Click:Connect(function()
+		if Visualizer.currentId then play(Visualizer.currentId) end
+	end)
+	btnPause.MouseButton1Click:Connect(togglePause)
+	btnStop.MouseButton1Click:Connect(stop)
+
+	local SPEEDS = { 0.1, 0.25, 0.5, 1, 1.5, 2 }
+	local si = 4
+	btnSpeed.MouseButton1Click:Connect(function()
+		si = si % #SPEEDS + 1
+		Visualizer.speed = SPEEDS[si]
+		btnSpeed.Text = "Speed " .. tostring(Visualizer.speed) .. "x"
+		if Visualizer.track and not Visualizer.paused then
+			pcall(function() Visualizer.track:AdjustSpeed(Visualizer.speed) end)
+		end
+	end)
+
+	btnLoop.MouseButton1Click:Connect(function()
+		Visualizer.looping = not Visualizer.looping
+		btnLoop.Text = Visualizer.looping and "Loop ON" or "Loop OFF"
+		if Visualizer.track then
+			pcall(function() Visualizer.track.Looped = Visualizer.looping end)
+		end
+	end)
+
+	btnClear.MouseButton1Click:Connect(function()
+		timings = {}
+		saveTimings()
+		refreshBadge()
+		refreshDots()
+	end)
+
+	UserInputService.InputBegan:Connect(function(input, gp)
+		if gp or input.KeyCode ~= Enum.KeyCode.Space then return end
+		if not frame.Visible then return end
+		togglePause()
+	end)
+
+	LP.CharacterAdded:Connect(function()
+		task.wait(1)
+		buildRig()
+		if Visualizer.track and not Visualizer.paused then
+			pcall(function() Visualizer.track:Stop() end)
+			Visualizer.track = nil
+		end
+	end)
+
+	Visualizer.frame = frame
+	Visualizer.idBar = idBar
+	Visualizer.playFn = play
+end
+
+loadTimings()
+buildVisualizer()
+
+local enemyLog = buildLogger({
+	guiName   = "UniversalLogger",
+	winName   = "EnemyAnimLogger",
+	title     = "Universal Anim Logger",
+	w         = 440,
+	h         = 340,
+	x         = 20,
+	y         = 80,
+	reopenY   = 80,
+	bg        = Color3.fromRGB(20, 18, 12),
+	rowBg     = Color3.fromRGB(40, 35, 20),
+	btnBg     = Color3.fromRGB(70, 60, 40),
+	strokeCol = Color3.fromRGB(140, 100, 40),
+	titleCol  = Color3.fromRGB(230, 210, 160),
+})
+
+local selfLog = buildLogger({
+	guiName   = "UniversalSelfLogger",
+	winName   = "SelfAnimLogger",
+	title     = "My Anim Logger",
+	w         = 440,
+	h         = 340,
+	x         = 480,
+	y         = 80,
+	reopenY   = 108,
+	bg        = Color3.fromRGB(14, 18, 22),
+	rowBg     = Color3.fromRGB(22, 34, 44),
+	btnBg     = Color3.fromRGB(40, 60, 80),
+	strokeCol = Color3.fromRGB(60, 110, 150),
+	titleCol  = Color3.fromRGB(160, 210, 240),
+})
+
+local logRange = 120
+local enemyHooked = {}
+local selfHooked = {}
+
+local function hookEnemy(hum)
+	if not hum or not hum:IsA("Humanoid") or enemyHooked[hum] then return end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then
+		task.spawn(function()
+			local waited = 0
+			while hum.Parent and not animator and waited < 5 do
+				task.wait(0.1); waited += 0.1
+				animator = hum:FindFirstChildOfClass("Animator")
+			end
+			if animator then hookEnemy(hum) end
+		end)
+		return
+	end
+	enemyHooked[hum] = true
+	local model = hum.Parent
+
+	animator.AnimationPlayed:Connect(function(track)
+		local anim = track.Animation
+		if not anim then return end
+		local id = anim.AnimationId
+		if not id or id == "" then return end
+		if isLoco(id, anim.Name) then return end
+		if model == LP.Character then return end
+
+		local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+		local theirRoot = model:FindFirstChild("HumanoidRootPart")
+		if not myRoot or not theirRoot then return end
+
+		local d = (myRoot.Position - theirRoot.Position).Magnitude
+		if d <= logRange then
+			task.spawn(function()
+				enemyLog.addRow(id, anim.Name, model.Name, math.floor(d))
+			end)
+		end
+	end)
+end
+
+local function hookSelf(hum)
+	if not hum or not hum:IsA("Humanoid") or selfHooked[hum] then return end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then
+		task.spawn(function()
+			local waited = 0
+			while hum.Parent and not animator and waited < 5 do
+				task.wait(0.1); waited += 0.1
+				animator = hum:FindFirstChildOfClass("Animator")
+			end
+			if animator then hookSelf(hum) end
+		end)
+		return
+	end
+	selfHooked[hum] = true
+
+	animator.AnimationPlayed:Connect(function(track)
+		local anim = track.Animation
+		if not anim then return end
+		local id = anim.AnimationId
+		if not id or id == "" then return end
+		if isLoco(id, anim.Name) then return end
+		task.spawn(function()
+			selfLog.addRow(id, anim.Name, "me", 0)
+		end)
+	end)
+end
+
+local function scanEnemies()
+	local myChar = LP.Character
+	for _, o in ipairs(workspace:GetDescendants()) do
+		if o:IsA("Humanoid") and not (o.Parent and myChar and o.Parent == myChar) then
+			hookEnemy(o)
+		end
+	end
+end
+
+local function bindSelf()
+	local char = LP.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then hookSelf(hum) end
+	char.ChildAdded:Connect(function(c)
+		if c:IsA("Humanoid") then hookSelf(c) end
+	end)
+end
+
+scanEnemies()
+bindSelf()
+
+local live = workspace:FindFirstChild("Live")
+if live then
+	live.ChildAdded:Connect(function(c)
+		if c:IsA("Model") then
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h then hookEnemy(h) end
+		end
+	end)
+end
+
+local pl = workspace:FindFirstChild("Players")
+if pl then
+	pl.ChildAdded:Connect(function(c)
+		if c:IsA("Model") then
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h then hookEnemy(h) end
+		end
+	end)
+end
+
+workspace.DescendantAdded:Connect(function(o)
+	if o:IsA("Humanoid") then
+		local myChar = LP.Character
+		if not (o.Parent and myChar and o.Parent == myChar) then
+			hookEnemy(o)
+		end
+	end
+end)
+
+Players.PlayerAdded:Connect(function(plr)
+	plr.CharacterAdded:Connect(function(c)
+		local h = c:WaitForChild("Humanoid", 5)
+		if h then hookEnemy(h) end
+	end)
+end)
+
+LP.CharacterAdded:Connect(function()
+	task.wait(0.8)
+	selfHooked = {}
+	bindSelf()
+end)
+
+if Visualizer.pending then
+	local id = Visualizer.pending
+	Visualizer.pending = nil
+	Visualizer.selectAnim(id)
+end
